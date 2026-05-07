@@ -14,7 +14,11 @@ import {
 export default function App() {
   const authState = useAuth();
   const appDataState = useAppData(authState.user);
-  const sharedState = { ...appDataState, ...authState };
+  const sharedState = {
+    ...authState,
+    ...appDataState,
+    authLoading: authState.loading
+  };
 
   return (
     <Routes>

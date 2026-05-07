@@ -12,7 +12,17 @@ function Card({ title, children }) {
   );
 }
 
-function PageState({ title, loading, error, user, children }) {
+function PageState({ title, loading, error, user, authLoading, children }) {
+  if (authLoading) {
+    return (
+      <Layout title={title}>
+        <Card title={title}>
+          <p className="text-sm sm:text-base">Загрузка...</p>
+        </Card>
+      </Layout>
+    );
+  }
+
   if (!user) {
     return (
       <Layout title={title}>
@@ -46,11 +56,11 @@ function PageState({ title, loading, error, user, children }) {
   return <Layout title={title}>{children}</Layout>;
 }
 
-export function TodayPage({ data, loading, error, user }) {
+export function TodayPage({ data, loading, error, user, authLoading }) {
   const today = data?.today;
 
   return (
-    <PageState title="Сегодня" loading={loading} error={error} user={user}>
+    <PageState title="Сегодня" loading={loading} error={error} user={user} authLoading={authLoading}>
       <div className="grid gap-3 sm:gap-4 md:grid-cols-2">
         <Card title="Статус цикла">
           <div className="space-y-1 text-sm sm:text-base">
@@ -89,11 +99,11 @@ function dayBadge(type) {
   return "bg-slate-100 text-slate-700";
 }
 
-export function CalendarPage({ data, loading, error, user }) {
+export function CalendarPage({ data, loading, error, user, authLoading }) {
   const calendar = data?.calendar;
 
   return (
-    <PageState title="Календарь цикла" loading={loading} error={error} user={user}>
+    <PageState title="Календарь цикла" loading={loading} error={error} user={user} authLoading={authLoading}>
       <div className="space-y-3 sm:space-y-4">
         <Card title={calendar?.monthName}>
           <div className="overflow-x-auto pb-1">
@@ -129,7 +139,7 @@ export function CalendarPage({ data, loading, error, user }) {
   );
 }
 
-export function LogPage({ data, loading, error, refresh, user }) {
+export function LogPage({ data, loading, error, refresh, user, authLoading }) {
   const dailyLog = data?.dailyLog;
   const [formData, setFormData] = useState({
     pain: "",
@@ -241,7 +251,7 @@ export function LogPage({ data, loading, error, refresh, user }) {
   }
 
   return (
-    <PageState title="Запись самочувствия" loading={loading} error={error} user={user}>
+    <PageState title="Запись самочувствия" loading={loading} error={error} user={user} authLoading={authLoading}>
       {/* Поля не отправляют данные, валидация демонстрирует готовность к реальному submit. */}
       <Card title={`Запись за ${dailyLog?.date || "сегодня"}`}>
         <form className="grid gap-3 sm:grid-cols-2" onSubmit={handleSubmit} noValidate>
@@ -330,11 +340,11 @@ export function LogPage({ data, loading, error, refresh, user }) {
   );
 }
 
-export function AnalyticsPage({ data, loading, error, user }) {
+export function AnalyticsPage({ data, loading, error, user, authLoading }) {
   const analytics = data?.analytics;
 
   return (
-    <PageState title="Аналитика" loading={loading} error={error} user={user}>
+    <PageState title="Аналитика" loading={loading} error={error} user={user} authLoading={authLoading}>
       <div className="grid gap-3 sm:gap-4 md:grid-cols-2">
         <Card title="Регулярность цикла">
           <div className="space-y-1 text-sm sm:text-base">
@@ -503,7 +513,7 @@ export function ProfilePage({ data, loading, error, user, signOut, refresh, auth
   }
 
   return (
-    <PageState title="Профиль и история" loading={loading} error={error} user={user}>
+    <PageState title="Профиль и история" loading={loading} error={error} user={user} authLoading={authLoading}>
       <div className="grid gap-3 sm:gap-4 md:grid-cols-2">
         <Card title="Профиль">
           {!isEditingPersonal ? (
@@ -595,13 +605,13 @@ export function ProfilePage({ data, loading, error, user, signOut, refresh, auth
   );
 }
 
-export function SettingsPage({ data, loading, error, user }) {
+export function SettingsPage({ data, loading, error, user, authLoading }) {
   const settings = data?.profile?.settings;
   const reminders = data?.reminders || [];
   const notificationsEnabled = reminders.some((item) => item.enabled);
 
   return (
-    <PageState title="Настройки" loading={loading} error={error} user={user}>
+    <PageState title="Настройки" loading={loading} error={error} user={user} authLoading={authLoading}>
       <div className="grid gap-3 sm:gap-4 md:grid-cols-2">
         <Card title="Основные настройки">
           <ul className="space-y-2 text-sm sm:text-base">
