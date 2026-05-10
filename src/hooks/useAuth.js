@@ -1,6 +1,22 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 
+function clearSupabaseAuthStorage() {
+  if (typeof window === "undefined") return;
+  try {
+    Object.keys(window.localStorage).forEach((key) => {
+      if (key.startsWith("sb-") && key.endsWith("-auth-token")) {
+        window.localStorage.removeItem(key);
+      }
+      if (key.startsWith("cyclecare_app_data_v1:")) {
+        window.localStorage.removeItem(key);
+      }
+    });
+  } catch {
+    // Игнорируем ошибки очистки localStorage.
+  }
+}
+
 export function useAuth() {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -28,8 +44,24 @@ export function useAuth() {
   }, []);
 
   async function signOut() {
-    const { error } = await supabase.auth.signOut();
-    if (error) throw error;
+    let signOutError = null;
+    try {
+      const { error } = await supabase.auth.signOut({ scope: "local" });
+      signOutError = error || null;
+      if (error) {
+        const fallback = await supabase.auth.signOut();
+        if (fallback.error) {
+          signOutError = fallback.error;
+        } else {
+          signOutError = null;
+        }
+      }
+    } finally {
+      clearSupabaseAuthStorage();
+      setSession(null);
+    }
+
+    if (signOutError) throw signOutError;
   }
 
   return {

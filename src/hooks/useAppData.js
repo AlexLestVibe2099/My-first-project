@@ -1,6 +1,29 @@
 import { useCallback, useEffect, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
 
+const APP_DATA_CACHE_PREFIX = "cyclecare_app_data_v1:";
+
+function readCachedData(userId) {
+  if (!userId || typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(`${APP_DATA_CACHE_PREFIX}${userId}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedData(userId, value) {
+  if (!userId || typeof window === "undefined" || !value) return;
+  try {
+    window.localStorage.setItem(`${APP_DATA_CACHE_PREFIX}${userId}`, JSON.stringify(value));
+  } catch {
+    // Игнорируем ошибки localStorage (например, quota exceeded).
+  }
+}
+
 function formatDate(dateString) {
   if (!dateString) return "Нет данных";
   const date = new Date(dateString);
@@ -50,8 +73,8 @@ function parsePrivateData(notesPrivate) {
 }
 
 export function useAppData(user) {
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState(() => readCachedData(user?.id));
+  const [loading, setLoading] = useState(() => Boolean(user?.id) && !readCachedData(user?.id));
   const [error, setError] = useState("");
 
   const fetchData = useCallback(async () => {
@@ -62,7 +85,13 @@ export function useAppData(user) {
       return;
     }
 
-    setLoading(true);
+    const cachedData = readCachedData(user.id);
+    if (cachedData) {
+      setData(cachedData);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     setError("");
 
     try {
@@ -113,7 +142,11 @@ export function useAppData(user) {
 
       const symptomCounts = {};
       (entries || []).forEach((entry) => {
-        const symptoms = Array.isArray(entry.symptoms) ? entry.symptoms : [];
+        const symptoms = Array.isArray(entry.symptoms)
+          ? entry.symptoms
+          : entry.symptom
+            ? [entry.symptom]
+            : [];
         symptoms.forEach((symptom) => {
           symptomCounts[symptom] = (symptomCounts[symptom] || 0) + 1;
         });
@@ -128,7 +161,7 @@ export function useAppData(user) {
       const phoneFromAuth = user?.user_metadata?.phone || user?.phone || "";
       const ageValue = Number(privateData.age);
 
-      setData({
+      const nextData = {
         today: {
           date: formatDate(latestEntry?.entry_date),
           cycleDay: latestEntry?.cycle_day ?? "Нет данных",
@@ -149,6 +182,7 @@ export function useAppData(user) {
         },
         dailyLog: {
           date: formatDate(latestEntry?.entry_date || new Date().toISOString()),
+          symptom: latestEntry?.symptom || (Array.isArray(latestEntry?.symptoms) ? latestEntry.symptoms[0] || "" : ""),
           pain: latestEntry?.pain_level ?? "",
           mood: latestEntry?.mood || "",
           sleepHours: latestEntry?.sleep_hours ?? "",
@@ -182,7 +216,10 @@ export function useAppData(user) {
           }
         },
         reminders
-      });
+      };
+
+      setData(nextData);
+      writeCachedData(user.id, nextData);
     } catch (err) {
       setError(err.message || "Не удалось загрузить данные из Supabase.");
     } finally {

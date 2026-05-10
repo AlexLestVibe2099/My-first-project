@@ -141,7 +141,24 @@ export function CalendarPage({ data, loading, error, user, authLoading }) {
 
 export function LogPage({ data, loading, error, refresh, user, authLoading }) {
   const dailyLog = data?.dailyLog;
+  const symptomOptions = [
+    { value: "headache", label: "Головная боль" },
+    { value: "lower_abdominal_pain", label: "Боль внизу живота" },
+    { value: "back_pain", label: "Боль в пояснице" },
+    { value: "breast_tenderness", label: "Чувствительность груди" },
+    { value: "bloating", label: "Вздутие" },
+    { value: "nausea", label: "Тошнота" },
+    { value: "fatigue", label: "Усталость" },
+    { value: "irritability", label: "Раздражительность" },
+    { value: "acne", label: "Высыпания на коже" },
+    { value: "cramps", label: "Спазмы" }
+  ];
+  const allowedSymptoms = new Set(symptomOptions.map((item) => item.value));
+  function normalizeSymptom(value) {
+    return allowedSymptoms.has(value) ? value : "";
+  }
   const [formData, setFormData] = useState({
+    symptom: "",
     pain: "",
     mood: "",
     sleepHours: "",
@@ -156,6 +173,7 @@ export function LogPage({ data, loading, error, refresh, user, authLoading }) {
   useEffect(() => {
     if (!dailyLog) return;
     setFormData({
+      symptom: normalizeSymptom(dailyLog.symptom),
       pain: String(dailyLog.pain ?? ""),
       mood: dailyLog.mood || "",
       sleepHours: String(dailyLog.sleepHours ?? ""),
@@ -194,6 +212,10 @@ export function LogPage({ data, loading, error, refresh, user, authLoading }) {
       nextErrors.discharge = "Поле не должно быть пустым.";
     }
 
+    if (!values.symptom) {
+      nextErrors.symptom = "Выбери симптом из списка.";
+    }
+
     if (values.notes.length > 300) {
       nextErrors.notes = "Заметка не должна превышать 300 символов.";
     }
@@ -226,16 +248,18 @@ export function LogPage({ data, loading, error, refresh, user, authLoading }) {
         throw new Error("Пользователь не авторизован. Войди в аккаунт и попробуй снова.");
       }
 
-      const { error: saveError } = await supabase.from("cycle_entries").insert({
+      const today = new Date().toISOString().slice(0, 10);
+      const { error: saveError } = await supabase.from("cycle_entries").upsert({
         user_id: user.id,
-        entry_date: new Date().toISOString().slice(0, 10),
+        entry_date: today,
+        symptoms: formData.symptom ? [formData.symptom] : [],
         pain_level: Number(formData.pain),
         mood: formData.mood,
         sleep_hours: Number(formData.sleepHours),
         energy_level: formData.energy,
         discharge_type: formData.discharge,
         notes: formData.notes
-      });
+      }, { onConflict: "user_id,entry_date" });
 
       if (saveError) throw saveError;
 
@@ -255,6 +279,23 @@ export function LogPage({ data, loading, error, refresh, user, authLoading }) {
       {/* Поля не отправляют данные, валидация демонстрирует готовность к реальному submit. */}
       <Card title={`Запись за ${dailyLog?.date || "сегодня"}`}>
         <form className="grid gap-3 sm:grid-cols-2" onSubmit={handleSubmit} noValidate>
+          <label className="space-y-1">
+            <span className="text-sm">Симптом</span>
+            <select
+              name="symptom"
+              className="w-full rounded-lg border p-2.5 text-base"
+              value={formData.symptom}
+              onChange={handleChange}
+            >
+              <option value="">Выбери симптом</option>
+              {symptomOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            {errors.symptom ? <p className="text-xs text-rose-600">{errors.symptom}</p> : null}
+          </label>
           <label className="space-y-1">
             <span className="text-sm">Боль (0-10)</span>
             <input
@@ -629,7 +670,6 @@ export function SettingsPage({ data, loading, error, user, authLoading }) {
             <li>Напоминание о записи: ежедневно в 21:00</li>
           </ul>
           <div className="mt-3 border-t pt-3">
-            <p className="mb-2 text-sm font-medium">Активные правила</p>
             <ul className="space-y-3">
             {reminders.map((item) => (
               <li key={item.id} className="flex flex-col gap-2 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between">
