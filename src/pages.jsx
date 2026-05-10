@@ -1,7 +1,26 @@
 import React, { useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import Layout from "./components/Layout";
-import { ensureUserRecords, signInOrSignUpByPhone } from "./lib/authPhone";
+import {
+  ensureUserProfile,
+  resetPassword,
+  signInWithEmail,
+  signUpWithEmail,
+  updatePassword,
+  validateSignIn,
+  validateSignUp
+} from "./lib/authEmail";
+import { handleApiError, saveCycleEntry, updateProfile } from "./lib/apiClient";
 import { supabase } from "./lib/supabaseClient";
+import {
+  validateDischarge,
+  validateEnergy,
+  validateMood,
+  validateNotes,
+  validatePainLevel,
+  validateSleepHours,
+  validateSymptom
+} from "./lib/validation";
 
 function Card({ title, children }) {
   return (
@@ -54,6 +73,331 @@ function PageState({ title, loading, error, user, authLoading, children }) {
   }
 
   return <Layout title={title}>{children}</Layout>;
+}
+
+// ── Страница входа / регистрации ─────────────────────────────────────────────
+
+export function AuthPage({ initialMode = "signin" }) {
+  const [mode, setMode] = useState(initialMode); // "signin" | "signup" | "reset"
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [errors, setErrors] = useState({});
+  const [message, setMessage] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    setMode(initialMode);
+    setErrors({});
+    setMessage("");
+  }, [initialMode]);
+
+  function handleFieldChange(setter, field) {
+    return (event) => {
+      setter(event.target.value);
+      setErrors((prev) => ({ ...prev, [field]: undefined }));
+      setMessage("");
+    };
+  }
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setMessage("");
+
+    if (mode === "reset") {
+      const errs = {};
+      if (!email.trim()) errs.email = "Email обязателен.";
+      if (Object.keys(errs).length) { setErrors(errs); return; }
+      setIsSubmitting(true);
+      try {
+        await resetPassword(email);
+        setMessage("Письмо для сброса пароля отправлено. Проверь почту.");
+      } catch (err) {
+        setErrors({ email: err?.message || "Не удалось отправить письмо." });
+      } finally {
+        setIsSubmitting(false);
+      }
+      return;
+    }
+
+    if (mode === "signup") {
+      const errs = validateSignUp(email, password, confirmPassword);
+      if (Object.keys(errs).length) { setErrors(errs); return; }
+      setIsSubmitting(true);
+      try {
+        const { user } = await signUpWithEmail(email, password);
+        if (user) await ensureUserProfile(user.id);
+        setMessage("Аккаунт создан. Если требуется подтверждение — проверь почту.");
+      } catch (err) {
+        setErrors({ form: err?.message || "Не удалось создать аккаунт." });
+      } finally {
+        setIsSubmitting(false);
+      }
+      return;
+    }
+
+    // signin
+    const errs = validateSignIn(email, password);
+    if (Object.keys(errs).length) { setErrors(errs); return; }
+    setIsSubmitting(true);
+    try {
+      const { user } = await signInWithEmail(email, password);
+      if (user) await ensureUserProfile(user.id);
+    } catch (err) {
+      setErrors({ form: err?.message || "Не удалось выполнить вход." });
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  const tabClass = (tab) =>
+    `flex-1 py-2.5 text-sm font-medium transition-colors rounded-lg ${
+      mode === tab
+        ? "bg-primary text-white shadow-sm"
+        : "text-slate-500 hover:text-slate-700"
+    }`;
+
+  return (
+    <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 px-4 py-10">
+      <div className="w-full max-w-sm">
+        <div className="mb-8 text-center">
+          <div className="mb-3 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-primary text-2xl text-white shadow">
+            🌸
+          </div>
+          <h1 className="text-2xl font-bold text-slate-800">CycleCare</h1>
+          <p className="mt-1 text-sm text-slate-500">Трекер менструального цикла</p>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          {mode !== "reset" && (
+            <div className="mb-5 flex gap-1 rounded-xl bg-slate-100 p-1">
+              <button type="button" className={tabClass("signin")} onClick={() => { setMode("signin"); setErrors({}); setMessage(""); }}>
+                Вход
+              </button>
+              <button type="button" className={tabClass("signup")} onClick={() => { setMode("signup"); setErrors({}); setMessage(""); }}>
+                Регистрация
+              </button>
+            </div>
+          )}
+
+          {mode === "reset" && (
+            <div className="mb-4">
+              <button
+                type="button"
+                className="flex items-center gap-1 text-sm text-slate-500 hover:text-slate-700"
+                onClick={() => { setMode("signin"); setErrors({}); setMessage(""); }}
+              >
+                ← Назад ко входу
+              </button>
+              <h2 className="mt-2 text-base font-semibold text-slate-800">Сброс пароля</h2>
+            </div>
+          )}
+
+          <form className="grid gap-4" onSubmit={handleSubmit} noValidate>
+            <label className="grid gap-1.5">
+              <span className="text-sm font-medium text-slate-700">Email</span>
+              <input
+                type="email"
+                autoComplete="email"
+                placeholder="you@example.com"
+                required
+                className={`w-full rounded-lg border px-3 py-2.5 text-base outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 ${
+                  errors.email ? "border-rose-400" : "border-slate-300"
+                }`}
+                value={email}
+                onChange={handleFieldChange(setEmail, "email")}
+              />
+              {errors.email ? <p className="text-xs text-rose-600">{errors.email}</p> : null}
+            </label>
+
+            {mode !== "reset" && (
+              <label className="grid gap-1.5">
+                <span className="text-sm font-medium text-slate-700">Пароль</span>
+                <input
+                  type="password"
+                  autoComplete={mode === "signup" ? "new-password" : "current-password"}
+                  placeholder="Минимум 8 символов"
+                  required
+                  className={`w-full rounded-lg border px-3 py-2.5 text-base outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 ${
+                    errors.password ? "border-rose-400" : "border-slate-300"
+                  }`}
+                  value={password}
+                  onChange={handleFieldChange(setPassword, "password")}
+                />
+                {errors.password ? <p className="text-xs text-rose-600">{errors.password}</p> : null}
+              </label>
+            )}
+
+            {mode === "signup" && (
+              <label className="grid gap-1.5">
+                <span className="text-sm font-medium text-slate-700">Повторите пароль</span>
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder="Введи пароль ещё раз"
+                  required
+                  className={`w-full rounded-lg border px-3 py-2.5 text-base outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 ${
+                    errors.confirmPassword ? "border-rose-400" : "border-slate-300"
+                  }`}
+                  value={confirmPassword}
+                  onChange={handleFieldChange(setConfirmPassword, "confirmPassword")}
+                />
+                {errors.confirmPassword ? <p className="text-xs text-rose-600">{errors.confirmPassword}</p> : null}
+              </label>
+            )}
+
+            {errors.form ? (
+              <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{errors.form}</p>
+            ) : null}
+            {message ? (
+              <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{message}</p>
+            ) : null}
+
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className="mt-1 w-full rounded-lg bg-primary py-3 text-base font-medium text-white shadow-sm transition hover:opacity-90 disabled:opacity-60"
+            >
+              {isSubmitting
+                ? "Загрузка..."
+                : mode === "signup"
+                  ? "Создать аккаунт"
+                  : mode === "reset"
+                    ? "Отправить письмо"
+                    : "Войти"}
+            </button>
+          </form>
+
+          {mode === "signin" && (
+            <>
+              <button
+                type="button"
+                className="mt-4 w-full text-center text-sm text-slate-400 hover:text-primary"
+                onClick={() => { setMode("reset"); setErrors({}); setMessage(""); }}
+              >
+                Забыл пароль?
+              </button>
+              <p className="mt-2 text-center text-sm text-slate-500">
+                Нет аккаунта? <Link to="/auth/register" className="text-primary hover:underline">Регистрация</Link>
+              </p>
+            </>
+          )}
+          {mode === "signup" && (
+            <p className="mt-2 text-center text-sm text-slate-500">
+              Уже есть аккаунт? <Link to="/auth/login" className="text-primary hover:underline">Вход</Link>
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function ResetPasswordPage() {
+  const navigate = useNavigate();
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setError("");
+    setMessage("");
+
+    if (!newPassword.trim()) {
+      setError("Новый пароль обязателен.");
+      return;
+    }
+    if (newPassword.length < 8) {
+      setError("Пароль должен содержать минимум 8 символов.");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setError("Пароли не совпадают.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      const { data } = await supabase.auth.getSession();
+      if (!data?.session) {
+        setError("Сессия восстановления не найдена. Открой ссылку из письма снова.");
+        return;
+      }
+
+      await updatePassword(newPassword);
+      setMessage("Пароль обновлен. Теперь войди с новым паролем.");
+      setTimeout(() => {
+        navigate("/auth/login", { replace: true });
+      }, 1200);
+    } catch (err) {
+      setError(err?.message || "Не удалось обновить пароль.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="flex min-h-screen flex-col items-center justify-center bg-slate-50 px-4 py-10">
+      <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <h1 className="text-xl font-semibold text-slate-800">Новый пароль</h1>
+        <p className="mt-1 text-sm text-slate-500">
+          Введи новый пароль для аккаунта после перехода из письма.
+        </p>
+
+        <form className="mt-5 grid gap-3" onSubmit={handleSubmit} noValidate>
+          <label className="grid gap-1.5">
+            <span className="text-sm font-medium text-slate-700">Новый пароль</span>
+            <input
+              type="password"
+              required
+              autoComplete="new-password"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+              value={newPassword}
+              onChange={(event) => {
+                setNewPassword(event.target.value);
+                setError("");
+                setMessage("");
+              }}
+            />
+          </label>
+
+          <label className="grid gap-1.5">
+            <span className="text-sm font-medium text-slate-700">Повтори новый пароль</span>
+            <input
+              type="password"
+              required
+              autoComplete="new-password"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-base outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+              value={confirmPassword}
+              onChange={(event) => {
+                setConfirmPassword(event.target.value);
+                setError("");
+                setMessage("");
+              }}
+            />
+          </label>
+
+          {error ? <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p> : null}
+          {message ? <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{message}</p> : null}
+
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            className="mt-1 w-full rounded-lg bg-primary py-3 text-base font-medium text-white shadow-sm transition hover:opacity-90 disabled:opacity-60"
+          >
+            {isSubmitting ? "Сохранение..." : "Сохранить новый пароль"}
+          </button>
+        </form>
+
+        <p className="mt-4 text-center text-sm text-slate-500">
+          Вспомнил пароль? <Link to="/auth/login" className="text-primary hover:underline">Вернуться ко входу</Link>
+        </p>
+      </div>
+    </div>
+  );
 }
 
 export function TodayPage({ data, loading, error, user, authLoading }) {
@@ -139,7 +483,8 @@ export function CalendarPage({ data, loading, error, user, authLoading }) {
   );
 }
 
-export function LogPage({ data, loading, error, refresh, user, authLoading }) {
+export function LogPage({ data, loading, error, refresh, user, authLoading, isAdmin }) {
+  const navigate = useNavigate();
   const dailyLog = data?.dailyLog;
   const symptomOptions = [
     { value: "headache", label: "Головная боль" },
@@ -168,6 +513,7 @@ export function LogPage({ data, loading, error, refresh, user, authLoading }) {
   });
   const [errors, setErrors] = useState({});
   const [submitMessage, setSubmitMessage] = useState("");
+  const [submitStatus, setSubmitStatus] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
@@ -185,40 +531,17 @@ export function LogPage({ data, loading, error, refresh, user, authLoading }) {
 
   function validate(values) {
     const nextErrors = {};
+    nextErrors.symptom = validateSymptom(values.symptom, allowedSymptoms);
+    nextErrors.pain = validatePainLevel(values.pain);
+    nextErrors.mood = validateMood(values.mood);
+    nextErrors.sleepHours = validateSleepHours(values.sleepHours);
+    nextErrors.energy = validateEnergy(values.energy);
+    nextErrors.discharge = validateDischarge(values.discharge);
+    nextErrors.notes = validateNotes(values.notes);
 
-    const painNumber = Number(values.pain);
-    if (values.pain.trim() === "") {
-      nextErrors.pain = "Укажи уровень боли.";
-    } else if (!Number.isFinite(painNumber) || painNumber < 0 || painNumber > 10) {
-      nextErrors.pain = "Боль должна быть числом от 0 до 10.";
-    }
-
-    if (values.mood.trim().length < 2) {
-      nextErrors.mood = "Настроение должно содержать минимум 2 символа.";
-    }
-
-    const sleepNumber = Number(values.sleepHours);
-    if (values.sleepHours.trim() === "") {
-      nextErrors.sleepHours = "Укажи количество часов сна.";
-    } else if (!Number.isFinite(sleepNumber) || sleepNumber < 0 || sleepNumber > 24) {
-      nextErrors.sleepHours = "Сон должен быть числом от 0 до 24.";
-    }
-
-    if (values.energy.trim() === "") {
-      nextErrors.energy = "Укажи уровень энергии.";
-    }
-
-    if (values.discharge.trim() === "") {
-      nextErrors.discharge = "Поле не должно быть пустым.";
-    }
-
-    if (!values.symptom) {
-      nextErrors.symptom = "Выбери симптом из списка.";
-    }
-
-    if (values.notes.length > 300) {
-      nextErrors.notes = "Заметка не должна превышать 300 символов.";
-    }
+    Object.keys(nextErrors).forEach((key) => {
+      if (!nextErrors[key]) delete nextErrors[key];
+    });
 
     return nextErrors;
   }
@@ -228,6 +551,7 @@ export function LogPage({ data, loading, error, refresh, user, authLoading }) {
     setFormData((prev) => ({ ...prev, [name]: value }));
     setErrors((prev) => ({ ...prev, [name]: undefined }));
     setSubmitMessage("");
+    setSubmitStatus(null);
   }
 
   async function handleSubmit(event) {
@@ -237,6 +561,7 @@ export function LogPage({ data, loading, error, refresh, user, authLoading }) {
     if (Object.keys(nextErrors).length > 0) {
       setErrors(nextErrors);
       setSubmitMessage("");
+      setSubmitStatus(400);
       return;
     }
 
@@ -244,31 +569,27 @@ export function LogPage({ data, loading, error, refresh, user, authLoading }) {
     setErrors({});
 
     try {
-      if (!user) {
-        throw new Error("Пользователь не авторизован. Войди в аккаунт и попробуй снова.");
-      }
-
       const today = new Date().toISOString().slice(0, 10);
-      const { error: saveError } = await supabase.from("cycle_entries").upsert({
-        user_id: user.id,
-        entry_date: today,
-        symptoms: formData.symptom ? [formData.symptom] : [],
-        pain_level: Number(formData.pain),
-        mood: formData.mood,
-        sleep_hours: Number(formData.sleepHours),
-        energy_level: formData.energy,
-        discharge_type: formData.discharge,
-        notes: formData.notes
-      }, { onConflict: "user_id,entry_date" });
-
-      if (saveError) throw saveError;
+      await saveCycleEntry(
+        user,
+        Boolean(isAdmin),
+        { ...formData, entryDate: today },
+        allowedSymptoms
+      );
 
       setSubmitMessage("Запись успешно сохранена.");
+      setSubmitStatus(200);
       if (refresh) {
         await refresh();
       }
     } catch (submitError) {
-      setSubmitMessage(`Ошибка сохранения: ${submitError.message}`);
+      const mappedError = handleApiError(submitError);
+      if (mappedError.status === 401) {
+        navigate("/auth/login", { replace: true });
+        return;
+      }
+      setSubmitMessage(`Ошибка сохранения: ${mappedError.message}`);
+      setSubmitStatus(mappedError.status || 400);
     } finally {
       setIsSubmitting(false);
     }
@@ -369,7 +690,7 @@ export function LogPage({ data, loading, error, refresh, user, authLoading }) {
           {submitMessage ? (
             <p
               className={`text-sm sm:col-span-2 ${
-                submitMessage.startsWith("Ошибка") ? "text-rose-600" : "text-emerald-700"
+                submitStatus === 200 ? "text-emerald-700" : "text-rose-600"
               }`}
             >
               {submitMessage}
@@ -414,14 +735,11 @@ export function AnalyticsPage({ data, loading, error, user, authLoading }) {
   );
 }
 
-export function ProfilePage({ data, loading, error, user, signOut, refresh, authLoading }) {
+export function ProfilePage({ data, loading, error, user, signOut, refresh, authLoading, isAdmin }) {
+  const navigate = useNavigate();
   const profile = data?.profile;
   const personal = profile?.personal;
-  const [phone, setPhone] = useState("");
-  const [pin, setPin] = useState("");
-  const [authMessage, setAuthMessage] = useState("");
   const [authError, setAuthError] = useState("");
-  const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
   const [isEditingPersonal, setIsEditingPersonal] = useState(false);
   const [isSavingPersonal, setIsSavingPersonal] = useState(false);
   const [personalMessage, setPersonalMessage] = useState("");
@@ -443,30 +761,8 @@ export function ProfilePage({ data, loading, error, user, signOut, refresh, auth
     });
   }, [personal]);
 
-  async function handleAuth(event) {
-    event.preventDefault();
-    setAuthError("");
-    setAuthMessage("");
-    setIsAuthSubmitting(true);
-
-    try {
-      const { user: authUser, phone: normalizedPhone, isNewUser } = await signInOrSignUpByPhone(phone, pin);
-      await ensureUserRecords(authUser.id, normalizedPhone);
-      if (refresh) {
-        await refresh();
-      }
-      setAuthMessage(isNewUser ? "Профиль создан и вход выполнен." : "Вход выполнен успешно.");
-      setPin("");
-    } catch (authErr) {
-      setAuthError(authErr.message || "Не удалось выполнить вход.");
-    } finally {
-      setIsAuthSubmitting(false);
-    }
-  }
-
   async function handleSignOut() {
     setAuthError("");
-    setAuthMessage("");
     try {
       await signOut();
     } catch (signOutError) {
@@ -481,27 +777,13 @@ export function ProfilePage({ data, loading, error, user, signOut, refresh, auth
     setIsSavingPersonal(true);
 
     try {
-      const ageValue = personalForm.age.trim() === "" ? null : Number(personalForm.age);
-      if (ageValue !== null && (!Number.isFinite(ageValue) || ageValue < 10 || ageValue > 80)) {
-        throw new Error("Возраст должен быть числом от 10 до 80.");
-      }
-
-      const nextPrivateData = {
-        ...(personal?.privateData || {}),
-        age: ageValue,
-        city: personalForm.city.trim(),
-        phone: personalForm.phone
-      };
-
-      const { error: updateError } = await supabase
-        .from("profiles")
-        .update({
-          display_name: personalForm.fullName.trim() || "Пользователь",
-          notes_private: JSON.stringify(nextPrivateData)
-        })
-        .eq("id", user.id);
-
-      if (updateError) throw updateError;
+      await updateProfile(
+        user,
+        Boolean(isAdmin),
+        user.id,
+        personalForm,
+        personal?.privateData || {}
+      );
 
       setPersonalMessage("Персональные данные обновлены.");
       setIsEditingPersonal(false);
@@ -509,48 +791,15 @@ export function ProfilePage({ data, loading, error, user, signOut, refresh, auth
         await refresh();
       }
     } catch (saveError) {
-      setPersonalError(saveError.message || "Не удалось сохранить персональные данные.");
+      const mappedError = handleApiError(saveError);
+      if (mappedError.status === 401) {
+        navigate("/auth/login", { replace: true });
+        return;
+      }
+      setPersonalError(mappedError.message || "Не удалось сохранить персональные данные.");
     } finally {
       setIsSavingPersonal(false);
     }
-  }
-
-  if (!user) {
-    return (
-      <Layout title="Профиль и история">
-        <Card title="Вход по номеру телефона">
-          <form className="grid gap-3" onSubmit={handleAuth}>
-            <label className="space-y-1">
-              <span className="text-sm">Номер телефона</span>
-              <input
-                className="w-full rounded-lg border p-2.5 text-base"
-                placeholder="+79991234567"
-                value={phone}
-                onChange={(event) => setPhone(event.target.value)}
-              />
-            </label>
-            <label className="space-y-1">
-              <span className="text-sm">PIN (минимум 6 символов)</span>
-              <input
-                className="w-full rounded-lg border p-2.5 text-base"
-                type="password"
-                value={pin}
-                onChange={(event) => setPin(event.target.value)}
-              />
-            </label>
-            <button
-              type="submit"
-              className="rounded-lg bg-primary px-4 py-3 text-base font-medium text-white disabled:opacity-70"
-              disabled={isAuthSubmitting || authLoading}
-            >
-              {isAuthSubmitting ? "Вход..." : "Войти"}
-            </button>
-            {authError ? <p className="text-sm text-rose-600">{authError}</p> : null}
-            {authMessage ? <p className="text-sm text-emerald-700">{authMessage}</p> : null}
-          </form>
-        </Card>
-      </Layout>
-    );
   }
 
   return (

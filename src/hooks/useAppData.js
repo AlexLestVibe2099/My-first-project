@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { handleApiError } from "../lib/apiClient";
 import { supabase } from "../lib/supabaseClient";
 
 const APP_DATA_CACHE_PREFIX = "cyclecare_app_data_v1:";
@@ -221,7 +222,16 @@ export function useAppData(user) {
       setData(nextData);
       writeCachedData(user.id, nextData);
     } catch (err) {
-      setError(err.message || "Не удалось загрузить данные из Supabase.");
+      const mappedError = handleApiError(err);
+      if (mappedError.status === 401) {
+        setError("Сессия истекла. Выполни вход снова.");
+        return;
+      }
+      if (mappedError.status === 403) {
+        setError("Нет прав");
+        return;
+      }
+      setError(mappedError.message || "Не удалось загрузить данные из Supabase.");
     } finally {
       setLoading(false);
     }
