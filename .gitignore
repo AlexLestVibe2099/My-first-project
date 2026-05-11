@@ -11,6 +11,7 @@ env/
 .npmrc
 *.pem
 *.key
+supabase/.temp/
 
 # OS / editor local files
 .DS_Store

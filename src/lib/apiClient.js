@@ -88,8 +88,15 @@ export async function updateProfile(user, isAdmin, targetUserId, formData, priva
     })
   };
 
-  const { error } = await supabase.from("profiles").update(payload).eq("id", targetUserId);
+  const { data, error } = await supabase
+    .from("profiles")
+    .update(payload)
+    .eq("id", targetUserId)
+    .select("id")
+    .maybeSingle();
+
   if (error) throw toAppError(error, 400, "Не удалось обновить профиль.");
+  if (!data?.id) throw new AppError(404, "Профиль не найден или нет прав на обновление.");
 }
 
 export async function saveUserSettings(user, isAdmin, targetUserId, formData) {

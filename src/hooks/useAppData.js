@@ -167,6 +167,7 @@ export function useAppData(user) {
           date: formatDate(latestEntry?.entry_date),
           cycleDay: latestEntry?.cycle_day ?? "Нет данных",
           phase: latestEvent?.event_type || "Нет данных",
+          symptom: latestEntry?.symptom || (Array.isArray(latestEntry?.symptoms) ? latestEntry.symptoms[0] || "" : ""),
           nextPeriodInDays: "Нет данных",
           reminders: reminders.filter((item) => item.enabled).map((item) => item.title),
           quickStats: {

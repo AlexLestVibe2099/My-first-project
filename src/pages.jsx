@@ -12,6 +12,7 @@ import {
 } from "./lib/authEmail";
 import { handleApiError, saveCycleEntry, updateProfile } from "./lib/apiClient";
 import { supabase } from "./lib/supabaseClient";
+import { useAiAdvice } from "./hooks/useAiAdvice";
 import {
   validateDischarge,
   validateEnergy,
@@ -125,9 +126,8 @@ export function AuthPage({ initialMode = "signin" }) {
       if (Object.keys(errs).length) { setErrors(errs); return; }
       setIsSubmitting(true);
       try {
-        const { user } = await signUpWithEmail(email, password);
-        if (user) await ensureUserProfile(user.id);
-        setMessage("Аккаунт создан. Если требуется подтверждение — проверь почту.");
+        await signUpWithEmail(email, password);
+        setMessage("Аккаунт создан. Проверь почту и подтверди email перед первым входом.");
       } catch (err) {
         setErrors({ form: err?.message || "Не удалось создать аккаунт." });
       } finally {
@@ -402,6 +402,7 @@ export function ResetPasswordPage() {
 
 export function TodayPage({ data, loading, error, user, authLoading }) {
   const today = data?.today;
+  const { advice, source, loading: adviceLoading } = useAiAdvice(user, today);
 
   return (
     <PageState title="Сегодня" loading={loading} error={error} user={user} authLoading={authLoading}>
@@ -430,6 +431,14 @@ export function TodayPage({ data, loading, error, user, authLoading }) {
         </Card>
         <Card title="Заметка дня">
           <p className="text-sm leading-relaxed sm:text-base">{today?.note}</p>
+        </Card>
+        <Card title="AI-рекомендация дня">
+          <p className="text-sm leading-relaxed sm:text-base">
+            {adviceLoading ? "Готовлю рекомендацию..." : advice}
+          </p>
+          <p className="mt-2 text-xs text-slate-500">
+            Источник: {source === "openai" ? "AI" : "базовые правила"}
+          </p>
         </Card>
       </div>
     </PageState>
