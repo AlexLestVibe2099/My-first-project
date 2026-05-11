@@ -3,6 +3,8 @@ import { handleApiError } from "../lib/apiClient";
 import { supabase } from "../lib/supabaseClient";
 
 const APP_DATA_CACHE_PREFIX = "cyclecare_app_data_v1:";
+const ENTRIES_FETCH_LIMIT = 180;
+const EVENTS_FETCH_LIMIT = 180;
 
 function readCachedData(userId) {
   if (!userId || typeof window === "undefined") return null;
@@ -73,6 +75,12 @@ function parsePrivateData(notesPrivate) {
   }
 }
 
+function getPrimarySymptom(entry) {
+  if (!entry) return "";
+  if (Array.isArray(entry.symptoms)) return entry.symptoms[0] || "";
+  return "";
+}
+
 export function useAppData(user) {
   const [data, setData] = useState(() => readCachedData(user?.id));
   const [loading, setLoading] = useState(() => Boolean(user?.id) && !readCachedData(user?.id));
@@ -103,11 +111,33 @@ export function useAppData(user) {
         { data: entries, error: entriesError },
         { data: events, error: eventsError }
       ] = await Promise.all([
-        supabase.from("profiles").select("*").eq("id", user.id).maybeSingle(),
-        supabase.from("user_settings").select("*").eq("user_id", user.id).maybeSingle(),
-        supabase.from("reminders").select("*").eq("user_id", user.id).order("created_at", { ascending: false }),
-        supabase.from("cycle_entries").select("*").eq("user_id", user.id).order("entry_date", { ascending: false }),
-        supabase.from("cycle_events").select("*").eq("user_id", user.id).order("event_date", { ascending: false })
+        supabase
+          .from("profiles")
+          .select("display_name,cycle_length_avg,period_length_avg,notes_private")
+          .eq("id", user.id)
+          .maybeSingle(),
+        supabase
+          .from("user_settings")
+          .select("theme,language,date_format")
+          .eq("user_id", user.id)
+          .maybeSingle(),
+        supabase
+          .from("reminders")
+          .select("id,title,time_local,is_enabled,created_at")
+          .eq("user_id", user.id)
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("cycle_entries")
+          .select("entry_date,symptoms,mood,pain_level,energy_level,sleep_hours,discharge_type,notes")
+          .eq("user_id", user.id)
+          .order("entry_date", { ascending: false })
+          .limit(ENTRIES_FETCH_LIMIT),
+        supabase
+          .from("cycle_events")
+          .select("event_date,event_type")
+          .eq("user_id", user.id)
+          .order("event_date", { ascending: false })
+          .limit(EVENTS_FETCH_LIMIT)
       ]);
 
       const queryError = profileError || settingsError || remindersError || entriesError || eventsError;
@@ -167,7 +197,7 @@ export function useAppData(user) {
           date: formatDate(latestEntry?.entry_date),
           cycleDay: latestEntry?.cycle_day ?? "Нет данных",
           phase: latestEvent?.event_type || "Нет данных",
-          symptom: latestEntry?.symptom || (Array.isArray(latestEntry?.symptoms) ? latestEntry.symptoms[0] || "" : ""),
+          symptom: getPrimarySymptom(latestEntry),
           nextPeriodInDays: "Нет данных",
           reminders: reminders.filter((item) => item.enabled).map((item) => item.title),
           quickStats: {
@@ -184,7 +214,7 @@ export function useAppData(user) {
         },
         dailyLog: {
           date: formatDate(latestEntry?.entry_date || new Date().toISOString()),
-          symptom: latestEntry?.symptom || (Array.isArray(latestEntry?.symptoms) ? latestEntry.symptoms[0] || "" : ""),
+          symptom: getPrimarySymptom(latestEntry),
           pain: latestEntry?.pain_level ?? "",
           mood: latestEntry?.mood || "",
           sleepHours: latestEntry?.sleep_hours ?? "",

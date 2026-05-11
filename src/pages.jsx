@@ -142,7 +142,12 @@ export function AuthPage({ initialMode = "signin" }) {
     setIsSubmitting(true);
     try {
       const { user } = await signInWithEmail(email, password);
-      if (user) await ensureUserProfile(user.id);
+      if (user) {
+        // Не блокируем вход созданием профиля/настроек, это может быть медленно.
+        ensureUserProfile(user.id).catch(() => {
+          // Ошибку обработает основной поток загрузки данных.
+        });
+      }
     } catch (err) {
       setErrors({ form: err?.message || "Не удалось выполнить вход." });
     } finally {
