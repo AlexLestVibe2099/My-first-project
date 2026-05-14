@@ -20,6 +20,7 @@ if (!url || !anon) {
 }
 
 const out = [];
+const smokePassword = env.SUPABASE_SMOKE_TEST_PASSWORD || process.env.SUPABASE_SMOKE_TEST_PASSWORD || "Password123!";
 
 async function req(name, input, init) {
   try {
@@ -77,7 +78,7 @@ await req("bad_email_signup", `${url}/auth/v1/signup`, {
   },
   body: JSON.stringify({
     email: badEmail,
-    password: "Password123!"
+    password: smokePassword
   })
 });
 
@@ -93,7 +94,7 @@ await req("signup_missing_password", `${url}/auth/v1/signup`, {
 });
 
 const secondEmail = `user2_${Date.now()}@example.com`;
-const secondPass = "Password123!";
+const secondPass = smokePassword;
 const signUpRes = await req("second_user_signup", `${url}/auth/v1/signup`, {
   method: "POST",
   headers: {

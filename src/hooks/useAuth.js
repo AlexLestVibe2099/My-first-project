@@ -152,6 +152,11 @@ export function useAuth() {
   }, []);
 
   async function signOut() {
+    // Мгновенно очищаем локальную сессию, чтобы ProtectedRoute сразу перенаправил на /auth/login.
+    clearSupabaseAuthStorage();
+    setSession(null);
+    setRole(null);
+
     let signOutError = null;
     try {
       const { error } = await supabase.auth.signOut({ scope: "local" });
@@ -160,10 +165,8 @@ export function useAuth() {
         const fallback = await supabase.auth.signOut();
         signOutError = fallback.error || null;
       }
-    } finally {
-      clearSupabaseAuthStorage();
-      setSession(null);
-      setRole(null);
+    } catch (error) {
+      signOutError = error || signOutError;
     }
     if (signOutError) throw signOutError;
   }

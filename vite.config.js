@@ -3,5 +3,5 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
-  envPrefix: ["VITE_", "SUPABASE_"]
+  envPrefix: ["VITE_", "SUPABASE_URL", "SUPABASE_ANON_KEY"]
 });

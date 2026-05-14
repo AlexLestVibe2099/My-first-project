@@ -3,8 +3,6 @@ import path from "node:path";
 import { test, expect } from "@playwright/test";
 import { createClient } from "@supabase/supabase-js";
 
-const AUTH_EMAIL = "alexander.brusnikin2016@yandex.ru";
-const AUTH_PASSWORD = "Gogo2099";
 const TODAY = new Date().toISOString().slice(0, 10);
 
 function readEnvFromRoot() {
@@ -21,8 +19,21 @@ function readEnvFromRoot() {
   return env;
 }
 
+const ENV = readEnvFromRoot();
+const AUTH_EMAIL = process.env.E2E_AUTH_EMAIL || ENV.E2E_AUTH_EMAIL;
+const AUTH_PASSWORD = process.env.E2E_AUTH_PASSWORD || ENV.E2E_AUTH_PASSWORD;
+
+function requireE2ECredentials() {
+  if (!AUTH_EMAIL || !AUTH_PASSWORD) {
+    throw new Error(
+      "Не заданы E2E_AUTH_EMAIL и E2E_AUTH_PASSWORD. Добавь их в .env или переменные окружения."
+    );
+  }
+}
+
 async function getAuthedSupabaseClient() {
-  const env = readEnvFromRoot();
+  requireE2ECredentials();
+  const env = ENV;
   const supabaseUrl = env.VITE_SUPABASE_URL || env.SUPABASE_URL;
   const supabaseAnonKey = env.VITE_SUPABASE_ANON_KEY || env.SUPABASE_ANON_KEY;
 
@@ -45,11 +56,14 @@ async function signOutClient(client) {
 }
 
 async function loginViaUi(page) {
+  requireE2ECredentials();
   await page.goto("/#/auth/login");
   await page.getByLabel("Email").fill(AUTH_EMAIL);
   await page.getByLabel("Пароль").fill(AUTH_PASSWORD);
   await page.getByRole("button", { name: "Войти" }).click();
-  await expect(page.getByRole("heading", { name: "Статус цикла" })).toBeVisible({ timeout: 30_000 });
+  await expect(page).toHaveURL(/#\/?$/, { timeout: 30_000 });
+  await expect(page.getByRole("heading", { name: "Сегодня" })).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("link", { name: "Профиль" })).toBeVisible();
 }
 
 async function openTab(page, tabName) {
@@ -132,7 +146,8 @@ async function fillDailyLogForm(page, values) {
 test("Клиент входит в личный кабинет по почте и паролю", async ({ page }) => {
   await loginViaUi(page);
   await expect(page).toHaveURL(/#\/?$/);
-  await expect(page.getByRole("heading", { name: "AI-рекомендация дня" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Сегодня" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Запись" })).toBeVisible();
 });
 
 test("Клиент изменяет персональные данные в профиле", async ({ page }) => {

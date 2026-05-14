@@ -14,6 +14,10 @@ type WebhookPayload = {
 const TEXT_ENCODER = new TextEncoder();
 const UNISENDER_ENDPOINT = "https://api.unisender.com/ru/api/sendEmail";
 const EVENT_STORE_TABLE = "webhook_processed_events";
+const DEFAULT_ALLOWED_ORIGINS = [
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+];
 
 function getRequiredEnv(name: string): string {
   const value = Deno.env.get(name)?.trim();
@@ -23,10 +27,41 @@ function getRequiredEnv(name: string): string {
   return value;
 }
 
-function jsonResponse(status: number, body: Record<string, unknown>) {
+function getAllowedOrigins(): string[] {
+  const raw = Deno.env.get("ALLOWED_ORIGINS")?.trim();
+  if (!raw) return DEFAULT_ALLOWED_ORIGINS;
+
+  return raw
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+const ALLOWED_ORIGINS = getAllowedOrigins();
+
+function resolveAllowedOrigin(req: Request): string | null {
+  const origin = req.headers.get("origin")?.trim();
+  if (!origin) return null;
+  return ALLOWED_ORIGINS.includes(origin) ? origin : null;
+}
+
+function buildCorsHeaders(req: Request): Record<string, string> {
+  const allowedOrigin = resolveAllowedOrigin(req);
+  const headers: Record<string, string> = {
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-webhook-signature, x-signature, x-webhook-token, x-event-id, x-webhook-id, x-supabase-event-id, svix-id",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    Vary: "Origin",
+  };
+  if (allowedOrigin) {
+    headers["Access-Control-Allow-Origin"] = allowedOrigin;
+  }
+  return headers;
+}
+
+function jsonResponse(req: Request, status: number, body: Record<string, unknown>) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "Content-Type": "application/json" },
+    headers: { ...buildCorsHeaders(req), "Content-Type": "application/json" },
   });
 }
 
@@ -278,9 +313,19 @@ function parseProviderErrorHint(data: unknown): string | undefined {
 
 Deno.serve(async (req) => {
   const webhookStart = Date.now();
+  const requestOrigin = req.headers.get("origin")?.trim() || "";
+  const allowedOrigin = resolveAllowedOrigin(req);
+
+  if (requestOrigin && !allowedOrigin) {
+    return jsonResponse(req, 403, { error: "Origin is not allowed" });
+  }
+
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { status: 204, headers: buildCorsHeaders(req) });
+  }
 
   if (req.method !== "POST") {
-    return jsonResponse(405, { error: "Method not allowed" });
+    return jsonResponse(req, 405, { error: "Method not allowed" });
   }
 
   const rawBody = await req.text();
@@ -293,7 +338,7 @@ Deno.serve(async (req) => {
       status: 401,
       durationMs: Date.now() - webhookStart,
     });
-    return jsonResponse(401, { error: "Invalid webhook authentication" });
+    return jsonResponse(req, 401, { error: "Invalid webhook authentication" });
   }
 
   let payload: WebhookPayload;
@@ -306,7 +351,7 @@ Deno.serve(async (req) => {
       status: 400,
       durationMs: Date.now() - webhookStart,
     });
-    return jsonResponse(400, { error: "Invalid JSON payload" });
+    return jsonResponse(req, 400, { error: "Invalid JSON payload" });
   }
 
   const eventId = await resolveEventId(rawBody, req, payload);
@@ -330,7 +375,7 @@ Deno.serve(async (req) => {
       durationMs: Date.now() - webhookStart,
       eventId,
     });
-    return jsonResponse(500, { error: "Function is not configured" });
+    return jsonResponse(req, 500, { error: "Function is not configured" });
   }
 
   const adminClient = createClient(supabaseUrl, serviceRoleKey);
@@ -345,7 +390,7 @@ Deno.serve(async (req) => {
         durationMs: Date.now() - webhookStart,
         eventId,
       });
-      return jsonResponse(200, { ok: true, duplicate: true });
+      return jsonResponse(req, 200, { ok: true, duplicate: true });
     }
 
     const userId = payload.record?.id ?? payload.record?.user_id;
@@ -358,7 +403,7 @@ Deno.serve(async (req) => {
         durationMs: Date.now() - webhookStart,
         eventId,
       });
-      return jsonResponse(200, { ok: true, skipped: "missing_user_id" });
+      return jsonResponse(req, 200, { ok: true, skipped: "missing_user_id" });
     }
 
     const { data: userData, error: userError } = await adminClient.auth.admin.getUserById(userId);
@@ -371,7 +416,7 @@ Deno.serve(async (req) => {
         durationMs: Date.now() - webhookStart,
         eventId,
       });
-      return jsonResponse(200, { ok: true, skipped: "user_email_not_found" });
+      return jsonResponse(req, 200, { ok: true, skipped: "user_email_not_found" });
     }
 
     const formData = new URLSearchParams({
@@ -434,7 +479,7 @@ Deno.serve(async (req) => {
     }
 
     await markProcessed(adminClient, eventId, "profiles_insert_webhook");
-    return jsonResponse(200, {
+    return jsonResponse(req, 200, {
       ok: true,
       event_id: eventId,
       unisender_status: unisenderStatus,
@@ -450,6 +495,6 @@ Deno.serve(async (req) => {
       durationMs: Date.now() - webhookStart,
       eventId,
     });
-    return jsonResponse(500, { error: "Internal processing error" });
+    return jsonResponse(req, 500, { error: "Internal processing error" });
   }
 });

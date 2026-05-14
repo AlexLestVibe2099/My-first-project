@@ -8,16 +8,46 @@ type AdviceRequest = {
   phase?: string;
 };
 
-const CORS_HEADERS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
+const DEFAULT_ALLOWED_ORIGINS = [
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+];
 
-function jsonResponse(status: number, body: Record<string, unknown>) {
+function getAllowedOrigins(): string[] {
+  const raw = Deno.env.get("ALLOWED_ORIGINS")?.trim();
+  if (!raw) return DEFAULT_ALLOWED_ORIGINS;
+
+  return raw
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+const ALLOWED_ORIGINS = getAllowedOrigins();
+
+function resolveAllowedOrigin(req: Request): string | null {
+  const origin = req.headers.get("origin")?.trim();
+  if (!origin) return null;
+  return ALLOWED_ORIGINS.includes(origin) ? origin : null;
+}
+
+function buildCorsHeaders(req: Request): Record<string, string> {
+  const allowedOrigin = resolveAllowedOrigin(req);
+  const headers: Record<string, string> = {
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    Vary: "Origin",
+  };
+  if (allowedOrigin) {
+    headers["Access-Control-Allow-Origin"] = allowedOrigin;
+  }
+  return headers;
+}
+
+function jsonResponse(req: Request, status: number, body: Record<string, unknown>) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+    headers: { ...buildCorsHeaders(req), "Content-Type": "application/json" },
   });
 }
 
@@ -292,20 +322,26 @@ async function generateOpenAIAdvice(payload: AdviceRequest): Promise<string> {
 
 Deno.serve(async (req) => {
   const startedAt = Date.now();
+  const requestOrigin = req.headers.get("origin")?.trim() || "";
+  const allowedOrigin = resolveAllowedOrigin(req);
+
+  if (requestOrigin && !allowedOrigin) {
+    return jsonResponse(req, 403, { error: "Origin is not allowed" });
+  }
 
   if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: CORS_HEADERS });
+    return new Response("ok", { status: 204, headers: buildCorsHeaders(req) });
   }
 
   if (req.method !== "POST") {
-    return jsonResponse(405, { error: "Method not allowed" });
+    return jsonResponse(req, 405, { error: "Method not allowed" });
   }
 
   let payload: AdviceRequest;
   try {
     payload = (await req.json()) as AdviceRequest;
   } catch {
-    return jsonResponse(400, { error: "Invalid JSON payload" });
+    return jsonResponse(req, 400, { error: "Invalid JSON payload" });
   }
 
   try {
@@ -319,7 +355,7 @@ Deno.serve(async (req) => {
         source: "openai",
       }),
     );
-    return jsonResponse(200, { advice, source: "openai" });
+    return jsonResponse(req, 200, { advice, source: "openai" });
   } catch {
     const advice = fallbackAdvice(payload);
     console.log(
@@ -331,6 +367,6 @@ Deno.serve(async (req) => {
         source: "fallback",
       }),
     );
-    return jsonResponse(200, { advice, source: "fallback" });
+    return jsonResponse(req, 200, { advice, source: "fallback" });
   }
 });
