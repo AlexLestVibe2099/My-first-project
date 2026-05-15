@@ -2,6 +2,29 @@ import { supabase } from "./supabaseClient";
 import { AppError, toAppError } from "./errors";
 import { validateEmail, validatePassword } from "./validation";
 
+function getBaseAuthUrl() {
+  const envUrl = import.meta.env.VITE_APP_URL;
+  if (typeof envUrl === "string" && envUrl.trim()) {
+    return envUrl.trim().replace(/\/+$/, "");
+  }
+
+  if (typeof window !== "undefined") {
+    return window.location.origin;
+  }
+
+  return undefined;
+}
+
+function getSignUpRedirectUrl() {
+  const baseUrl = getBaseAuthUrl();
+  return baseUrl ? `${baseUrl}/#/auth/login` : undefined;
+}
+
+function getPasswordRecoveryRedirectUrl() {
+  const baseUrl = getBaseAuthUrl();
+  return baseUrl ? `${baseUrl}/#/auth/reset-password` : undefined;
+}
+
 export function validateSignIn(email, password) {
   const errors = {};
   const emailErr = validateEmail(email);
@@ -27,7 +50,10 @@ export function validateSignUp(email, password, confirmPassword) {
 export async function signUpWithEmail(email, password) {
   const { data, error } = await supabase.auth.signUp({
     email: email.trim().toLowerCase(),
-    password
+    password,
+    options: {
+      emailRedirectTo: getSignUpRedirectUrl()
+    }
   });
   if (error) throw new AppError(400, error.message || "Не удалось создать аккаунт.");
   return data;
@@ -45,9 +71,7 @@ export async function signInWithEmail(email, password) {
 export async function resetPassword(email) {
   const emailErr = validateEmail(email);
   if (emailErr) throw new AppError(400, emailErr);
-  const redirectTo = typeof window !== "undefined"
-    ? `${window.location.origin}/#/auth/reset-password`
-    : undefined;
+  const redirectTo = getPasswordRecoveryRedirectUrl();
 
   const { error } = await supabase.auth.resetPasswordForEmail(
     email.trim().toLowerCase(),

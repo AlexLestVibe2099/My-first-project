@@ -83,6 +83,8 @@ export function AuthPage({ initialMode = "signin" }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [errors, setErrors] = useState({});
   const [message, setMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -218,17 +220,27 @@ export function AuthPage({ initialMode = "signin" }) {
             {mode !== "reset" && (
               <label className="grid gap-1.5">
                 <span className="text-sm font-medium text-slate-700">Пароль</span>
-                <input
-                  type="password"
-                  autoComplete={mode === "signup" ? "new-password" : "current-password"}
-                  placeholder="Минимум 8 символов"
-                  required
-                  className={`w-full rounded-lg border px-3 py-2.5 text-base outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 ${
-                    errors.password ? "border-rose-400" : "border-slate-300"
-                  }`}
-                  value={password}
-                  onChange={handleFieldChange(setPassword, "password")}
-                />
+                <div className="relative">
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    autoComplete={mode === "signup" ? "new-password" : "current-password"}
+                    placeholder="Минимум 8 символов"
+                    required
+                    className={`w-full rounded-lg border px-3 py-2.5 pr-10 text-base outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 ${
+                      errors.password ? "border-rose-400" : "border-slate-300"
+                    }`}
+                    value={password}
+                    onChange={handleFieldChange(setPassword, "password")}
+                  />
+                  <button
+                    type="button"
+                    className="absolute inset-y-0 right-0 flex items-center px-3 text-slate-400 hover:text-slate-600"
+                    aria-label={showPassword ? "Скрыть пароль" : "Показать пароль"}
+                    onClick={() => setShowPassword((prev) => !prev)}
+                  >
+                    {showPassword ? "🙈" : "👁️"}
+                  </button>
+                </div>
                 {errors.password ? <p className="text-xs text-rose-600">{errors.password}</p> : null}
               </label>
             )}
@@ -236,17 +248,27 @@ export function AuthPage({ initialMode = "signin" }) {
             {mode === "signup" && (
               <label className="grid gap-1.5">
                 <span className="text-sm font-medium text-slate-700">Повторите пароль</span>
-                <input
-                  type="password"
-                  autoComplete="new-password"
-                  placeholder="Введи пароль ещё раз"
-                  required
-                  className={`w-full rounded-lg border px-3 py-2.5 text-base outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 ${
-                    errors.confirmPassword ? "border-rose-400" : "border-slate-300"
-                  }`}
-                  value={confirmPassword}
-                  onChange={handleFieldChange(setConfirmPassword, "confirmPassword")}
-                />
+                <div className="relative">
+                  <input
+                    type={showConfirmPassword ? "text" : "password"}
+                    autoComplete="new-password"
+                    placeholder="Введи пароль ещё раз"
+                    required
+                    className={`w-full rounded-lg border px-3 py-2.5 pr-10 text-base outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 ${
+                      errors.confirmPassword ? "border-rose-400" : "border-slate-300"
+                    }`}
+                    value={confirmPassword}
+                    onChange={handleFieldChange(setConfirmPassword, "confirmPassword")}
+                  />
+                  <button
+                    type="button"
+                    className="absolute inset-y-0 right-0 flex items-center px-3 text-slate-400 hover:text-slate-600"
+                    aria-label={showConfirmPassword ? "Скрыть пароль" : "Показать пароль"}
+                    onClick={() => setShowConfirmPassword((prev) => !prev)}
+                  >
+                    {showConfirmPassword ? "🙈" : "👁️"}
+                  </button>
+                </div>
                 {errors.confirmPassword ? <p className="text-xs text-rose-600">{errors.confirmPassword}</p> : null}
               </label>
             )}
