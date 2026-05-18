@@ -18,6 +18,85 @@ const DEFAULT_ALLOWED_ORIGINS = [
   "http://localhost:5173",
   "http://127.0.0.1:5173",
 ];
+const MUTATING_METHODS = new Set(["POST", "PATCH", "DELETE"]);
+const SENSITIVE_KEY_RE =
+  /(password|passwd|secret|token|authorization|cookie|apikey|api_key|service_role|private|key)/i;
+
+type LogLevel = "info" | "error";
+
+function sanitizeForLog(value: unknown, key = ""): unknown {
+  if (SENSITIVE_KEY_RE.test(key)) return "[REDACTED]";
+  if (value === null || value === undefined) return value;
+  if (typeof value === "string") return value.length > 500 ? `${value.slice(0, 500)}...[truncated]` : value;
+  if (typeof value === "number" || typeof value === "boolean") return value;
+  if (Array.isArray(value)) return value.map((item) => sanitizeForLog(item));
+  if (value instanceof Error) {
+    return {
+      name: value.name,
+      message: value.message,
+      stack: value.stack,
+    };
+  }
+  if (typeof value === "object") {
+    const result: Record<string, unknown> = {};
+    for (const [entryKey, entryValue] of Object.entries(value as Record<string, unknown>)) {
+      result[entryKey] = sanitizeForLog(entryValue, entryKey);
+    }
+    return result;
+  }
+  return String(value);
+}
+
+function requestMeta(req: Request) {
+  const url = new URL(req.url);
+  return {
+    method: req.method,
+    url: req.url,
+    path: url.pathname,
+  };
+}
+
+function logJson(level: LogLevel, event: string, data: Record<string, unknown>) {
+  const payload = {
+    level,
+    event,
+    timestamp: new Date().toISOString(),
+    ...sanitizeForLog(data),
+  };
+  const line = JSON.stringify(payload);
+  if (level === "error") {
+    console.error(line);
+  } else {
+    console.log(line);
+  }
+}
+
+function logHttpRequest(req: Request, status: number, startedAt: number, extra: Record<string, unknown> = {}) {
+  if (!MUTATING_METHODS.has(req.method)) return;
+  logJson("info", "http_request", {
+    ...requestMeta(req),
+    status,
+    duration_ms: Date.now() - startedAt,
+    ...extra,
+  });
+}
+
+function logError(
+  req: Request,
+  event: string,
+  error: unknown,
+  startedAt: number,
+  status: number,
+  extra: Record<string, unknown> = {},
+) {
+  logJson("error", event, {
+    ...requestMeta(req),
+    status,
+    duration_ms: Date.now() - startedAt,
+    error,
+    ...extra,
+  });
+}
 
 function getRequiredEnv(name: string): string {
   const value = Deno.env.get(name)?.trim();
@@ -194,18 +273,16 @@ function logRequestMeta(args: {
   providerErrorCode?: string;
   providerErrorHint?: string;
 }) {
-  console.log(
-    JSON.stringify({
-      action: args.action,
-      endpoint: args.endpoint,
-      status: args.status,
-      duration_ms: args.durationMs,
-      event_id: args.eventId ?? "n/a",
-      provider_ok: args.providerOk ?? undefined,
-      provider_error_code: args.providerErrorCode ?? undefined,
-      provider_error_hint: args.providerErrorHint ?? undefined,
-    }),
-  );
+  logJson("info", "business_event", {
+    action: args.action,
+    endpoint: args.endpoint,
+    status: args.status,
+    duration_ms: args.durationMs,
+    event_id: args.eventId ?? "n/a",
+    provider_ok: args.providerOk ?? undefined,
+    provider_error_code: args.providerErrorCode ?? undefined,
+    provider_error_hint: args.providerErrorHint ?? undefined,
+  });
 }
 
 function isMissingEventStoreTable(error: { code?: string; message?: string } | null | undefined): boolean {
@@ -317,14 +394,16 @@ Deno.serve(async (req) => {
   const allowedOrigin = resolveAllowedOrigin(req);
 
   if (requestOrigin && !allowedOrigin) {
+    logHttpRequest(req, 403, webhookStart, { reason: "origin_not_allowed" });
     return jsonResponse(req, 403, { error: "Origin is not allowed" });
   }
 
   if (req.method === "OPTIONS") {
-    return new Response("ok", { status: 204, headers: buildCorsHeaders(req) });
+    return new Response(null, { status: 204, headers: buildCorsHeaders(req) });
   }
 
   if (req.method !== "POST") {
+    logHttpRequest(req, 405, webhookStart, { reason: "method_not_allowed" });
     return jsonResponse(req, 405, { error: "Method not allowed" });
   }
 
@@ -338,23 +417,33 @@ Deno.serve(async (req) => {
       status: 401,
       durationMs: Date.now() - webhookStart,
     });
+    logHttpRequest(req, 401, webhookStart, { reason: "webhook_auth_invalid" });
     return jsonResponse(req, 401, { error: "Invalid webhook authentication" });
   }
 
   let payload: WebhookPayload;
   try {
     payload = JSON.parse(rawBody);
-  } catch {
+  } catch (error) {
+    logError(req, "parse_webhook_payload_failed", error, webhookStart, 400);
     logRequestMeta({
       action: "parse_webhook_payload",
       endpoint: "/functions/v1/send-welcome-email",
       status: 400,
       durationMs: Date.now() - webhookStart,
     });
+    logHttpRequest(req, 400, webhookStart);
     return jsonResponse(req, 400, { error: "Invalid JSON payload" });
   }
 
   const eventId = await resolveEventId(rawBody, req, payload);
+  logJson("info", "business_registration_webhook_received", {
+    ...requestMeta(req),
+    event_id: eventId,
+    payload_type: payload.type ?? "n/a",
+    payload_table: payload.table ?? "n/a",
+    user_id: payload.record?.id ?? payload.record?.user_id ?? "n/a",
+  });
 
   let supabaseUrl: string;
   let serviceRoleKey: string;
@@ -367,7 +456,8 @@ Deno.serve(async (req) => {
     unisenderApiKey = getRequiredEnv("UNISENDER_API_KEY");
     senderEmail = getRequiredEnv("UNISENDER_SENDER_EMAIL");
     senderName = getRequiredEnv("UNISENDER_SENDER_NAME");
-  } catch {
+  } catch (error) {
+    logError(req, "load_required_env_failed", error, webhookStart, 500, { event_id: eventId });
     logRequestMeta({
       action: "load_env",
       endpoint: "/functions/v1/send-welcome-email",
@@ -375,6 +465,7 @@ Deno.serve(async (req) => {
       durationMs: Date.now() - webhookStart,
       eventId,
     });
+    logHttpRequest(req, 500, webhookStart, { event_id: eventId });
     return jsonResponse(req, 500, { error: "Function is not configured" });
   }
 
@@ -390,6 +481,7 @@ Deno.serve(async (req) => {
         durationMs: Date.now() - webhookStart,
         eventId,
       });
+      logHttpRequest(req, 200, webhookStart, { event_id: eventId, duplicate: true });
       return jsonResponse(req, 200, { ok: true, duplicate: true });
     }
 
@@ -403,6 +495,7 @@ Deno.serve(async (req) => {
         durationMs: Date.now() - webhookStart,
         eventId,
       });
+      logHttpRequest(req, 200, webhookStart, { event_id: eventId, skipped: "missing_user_id" });
       return jsonResponse(req, 200, { ok: true, skipped: "missing_user_id" });
     }
 
@@ -416,6 +509,7 @@ Deno.serve(async (req) => {
         durationMs: Date.now() - webhookStart,
         eventId,
       });
+      logHttpRequest(req, 200, webhookStart, { event_id: eventId, skipped: "user_email_not_found" });
       return jsonResponse(req, 200, { ok: true, skipped: "user_email_not_found" });
     }
 
@@ -465,6 +559,14 @@ Deno.serve(async (req) => {
         providerErrorCode,
         providerErrorHint,
       });
+      if (unisenderOk) {
+        logJson("info", "business_welcome_email_sent", {
+          ...requestMeta(req),
+          event_id: eventId,
+          provider: "unisender",
+          status: response.status,
+        });
+      }
     } catch {
       logRequestMeta({
         action: "send_welcome_email",
@@ -476,9 +578,19 @@ Deno.serve(async (req) => {
         providerErrorCode: "network_error",
         providerErrorHint: "provider_unreachable",
       });
+      logJson("error", "business_welcome_email_send_failed", {
+        ...requestMeta(req),
+        event_id: eventId,
+        provider: "unisender",
+      });
     }
 
     await markProcessed(adminClient, eventId, "profiles_insert_webhook");
+    logHttpRequest(req, 200, webhookStart, {
+      event_id: eventId,
+      unisender_status: unisenderStatus,
+      unisender_ok: unisenderOk,
+    });
     return jsonResponse(req, 200, {
       ok: true,
       event_id: eventId,
@@ -487,7 +599,8 @@ Deno.serve(async (req) => {
       unisender_error_code: providerErrorCode ?? null,
       unisender_error_hint: providerErrorHint ?? null,
     });
-  } catch {
+  } catch (error) {
+    logError(req, "handle_webhook_failed", error, webhookStart, 500, { event_id: eventId });
     logRequestMeta({
       action: "handle_webhook",
       endpoint: "/functions/v1/send-welcome-email",
@@ -495,6 +608,7 @@ Deno.serve(async (req) => {
       durationMs: Date.now() - webhookStart,
       eventId,
     });
+    logHttpRequest(req, 500, webhookStart, { event_id: eventId });
     return jsonResponse(req, 500, { error: "Internal processing error" });
   }
 });

@@ -25,6 +25,86 @@ function getAllowedOrigins(): string[] {
 
 const ALLOWED_ORIGINS = getAllowedOrigins();
 
+const MUTATING_METHODS = new Set(["POST", "PATCH", "DELETE"]);
+const SENSITIVE_KEY_RE =
+  /(password|passwd|secret|token|authorization|cookie|apikey|api_key|service_role|private|key)/i;
+
+type LogLevel = "info" | "error";
+
+function sanitizeForLog(value: unknown, key = ""): unknown {
+  if (SENSITIVE_KEY_RE.test(key)) return "[REDACTED]";
+  if (value === null || value === undefined) return value;
+  if (typeof value === "string") return value.length > 500 ? `${value.slice(0, 500)}...[truncated]` : value;
+  if (typeof value === "number" || typeof value === "boolean") return value;
+  if (Array.isArray(value)) return value.map((item) => sanitizeForLog(item));
+  if (value instanceof Error) {
+    return {
+      name: value.name,
+      message: value.message,
+      stack: value.stack,
+    };
+  }
+  if (typeof value === "object") {
+    const result: Record<string, unknown> = {};
+    for (const [entryKey, entryValue] of Object.entries(value as Record<string, unknown>)) {
+      result[entryKey] = sanitizeForLog(entryValue, entryKey);
+    }
+    return result;
+  }
+  return String(value);
+}
+
+function requestMeta(req: Request) {
+  const url = new URL(req.url);
+  return {
+    method: req.method,
+    url: req.url,
+    path: url.pathname,
+  };
+}
+
+function logJson(level: LogLevel, event: string, data: Record<string, unknown>) {
+  const payload = {
+    level,
+    event,
+    timestamp: new Date().toISOString(),
+    ...sanitizeForLog(data),
+  };
+  const line = JSON.stringify(payload);
+  if (level === "error") {
+    console.error(line);
+  } else {
+    console.log(line);
+  }
+}
+
+function logHttpRequest(req: Request, status: number, startedAt: number, extra: Record<string, unknown> = {}) {
+  if (!MUTATING_METHODS.has(req.method)) return;
+  logJson("info", "http_request", {
+    ...requestMeta(req),
+    status,
+    duration_ms: Date.now() - startedAt,
+    ...extra,
+  });
+}
+
+function logError(
+  req: Request,
+  event: string,
+  error: unknown,
+  startedAt: number,
+  status: number,
+  extra: Record<string, unknown> = {},
+) {
+  logJson("error", event, {
+    ...requestMeta(req),
+    status,
+    duration_ms: Date.now() - startedAt,
+    error,
+    ...extra,
+  });
+}
+
 function resolveAllowedOrigin(req: Request): string | null {
   const origin = req.headers.get("origin")?.trim();
   if (!origin) return null;
@@ -326,47 +406,56 @@ Deno.serve(async (req) => {
   const allowedOrigin = resolveAllowedOrigin(req);
 
   if (requestOrigin && !allowedOrigin) {
+    logHttpRequest(req, 403, startedAt, { reason: "origin_not_allowed" });
     return jsonResponse(req, 403, { error: "Origin is not allowed" });
   }
 
   if (req.method === "OPTIONS") {
-    return new Response("ok", { status: 204, headers: buildCorsHeaders(req) });
+    return new Response(null, { status: 204, headers: buildCorsHeaders(req) });
   }
 
   if (req.method !== "POST") {
+    logHttpRequest(req, 405, startedAt, { reason: "method_not_allowed" });
     return jsonResponse(req, 405, { error: "Method not allowed" });
   }
 
   let payload: AdviceRequest;
   try {
     payload = (await req.json()) as AdviceRequest;
-  } catch {
+  } catch (error) {
+    logError(req, "parse_request_payload_failed", error, startedAt, 400);
+    logHttpRequest(req, 400, startedAt);
     return jsonResponse(req, 400, { error: "Invalid JSON payload" });
   }
 
+  logJson("info", "business_ai_advice_requested", {
+    ...requestMeta(req),
+    has_note: Boolean(normalizeText(payload.note, 700)),
+    symptom: normalizeText(payload.symptom, 80),
+    pain: toNumberOrNull(payload.pain),
+    phase: normalizeText(payload.phase, 80),
+  });
+
   try {
     const advice = await generateOpenAIAdvice(payload);
-    console.log(
-      JSON.stringify({
-        action: "ai_daily_advice",
-        endpoint: "/functions/v1/ai-daily-advice",
-        status: 200,
-        duration_ms: Date.now() - startedAt,
-        source: "openai",
-      }),
-    );
+    logJson("info", "business_ai_advice_generated", {
+      ...requestMeta(req),
+      source: "openai",
+      status: 200,
+      duration_ms: Date.now() - startedAt,
+    });
+    logHttpRequest(req, 200, startedAt, { source: "openai" });
     return jsonResponse(req, 200, { advice, source: "openai" });
-  } catch {
+  } catch (error) {
+    logError(req, "ai_advice_generation_failed", error, startedAt, 500);
     const advice = fallbackAdvice(payload);
-    console.log(
-      JSON.stringify({
-        action: "ai_daily_advice",
-        endpoint: "/functions/v1/ai-daily-advice",
-        status: 200,
-        duration_ms: Date.now() - startedAt,
-        source: "fallback",
-      }),
-    );
+    logJson("info", "business_ai_advice_generated", {
+      ...requestMeta(req),
+      source: "fallback",
+      status: 200,
+      duration_ms: Date.now() - startedAt,
+    });
+    logHttpRequest(req, 200, startedAt, { source: "fallback" });
     return jsonResponse(req, 200, { advice, source: "fallback" });
   }
 });
